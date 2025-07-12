@@ -7,24 +7,76 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import argparse
 import base64
+import yaml
+import sqlite3
+import json
 
 # Constants
-VT_API_KEYS = ['VT_API_1','VT_API_2', 'VT_API_3']  # Add more VirusTotal API keys as needed
-ABUSEIPDB_API_KEYS = ['AbuseIPDB_API_1','AbuseIPDB_API_2','AbuseIPDB_API_3']  # Add more AbuseIPDB API keys as needed
-VT_URLS = {
-    'file': 'https://www.virustotal.com/api/v3/files/',
-    'domain': 'https://www.virustotal.com/api/v3/domains/',
-    'ip': 'https://www.virustotal.com/api/v3/ip_addresses/',
-    'url': 'https://www.virustotal.com/api/v3/urls/'
-}
-MAX_REQUESTS_PER_MINUTE = 1000  # Set this based on your VirusTotal API key limit
+with open('settings.yaml', 'r', encoding='utf-8') as file:
+    VirusTotal = yaml.safe_load(file)['VirusTotal']
+    VT_API_KEYS = VirusTotal['API_KEYS']
+    VT_URLS = VirusTotal['URLS']
+    MAX_REQUESTS_PER_MINUTE = VirusTotal['REQ_PER_MIN']
+
 
 # Thread-safe iterators for API keys
 vt_api_key_lock = threading.Lock()
 vt_api_key_cycle = itertools.cycle(VT_API_KEYS)
 
-abuseipdb_api_key_lock = threading.Lock()
-abuseipdb_api_key_cycle = itertools.cycle(ABUSEIPDB_API_KEYS)
+def format_date(datetime):
+    return datetime.strftime("%Y-%m-%d %H:%M:%S")
+
+def open_db_connection(filepath="db/db.sqlite3"):
+    conn = sqlite3.connect(filepath, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    cursor = conn.cursor()
+    return conn, cursor
+
+def get_db_positives(conn):
+    query = "SELECT ic.* FROM IoC AS ic WHERE vt_detections >= 10"
+    db_iocs = pd.read_sql_query(query, conn)
+    return db_iocs
+
+def upsert_db_results(df, cursor, conn):
+    # Get current timestamp in the desired format
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Prepare data for insertion
+    records = [
+        (row['ioc'], row['iocType'], row['vt_detections'], now, now, now)
+        for _, row in df.iterrows()
+    ]
+
+    # Insert with conflict handling (replace 'ioc' with your unique constraint column)
+    insert_query = """
+    INSERT INTO IoC (ioc, ioc_type, vt_detections, created_at, updated_at, last_seen)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(ioc) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        vt_detections = excluded.vt_detections,
+        last_seen = excluded.last_seen
+    """
+
+    cursor.executemany(insert_query, records)
+    conn.commit()
+
+
+def update_as_seen(df, cursor, conn):
+    now = format_date(datetime.now())
+    records = [(now, row['ioc']) for _, row in df.iterrows()]
+
+    update_query = """
+    UPDATE IoC
+    SET last_seen = ?
+    WHERE ioc = ?
+    """
+
+    cursor.executemany(update_query, records)
+    conn.commit()
+
+
+def close_db_connection(conn):
+    conn.close()
 
 
 def get_vt_report(ioc, ioc_type):
@@ -41,7 +93,6 @@ def get_vt_report(ioc, ioc_type):
         url = VT_URLS[ioc_type] + ioc
 
     response = requests.get(url, headers=headers)
-    print(f"Requesting {url} with API key {api_key[:5]}...")  # Debug statement
     if response.status_code == 200:
         return response.json()
     else:
@@ -49,189 +100,74 @@ def get_vt_report(ioc, ioc_type):
         return None
 
 
-def determine_ioc_type(ioc):
-    if ioc.count('.') == 3 and all(part.isdigit() and 0 <= int(part) < 256 for part in ioc.split('.')):
-        return 'ip'
-    elif '.' in ioc and '/' not in ioc:
-        return 'domain'
-    elif '/' in ioc:
-        return 'url'
-    else:
-        return 'file'
+def process_ioc(ioc, iocType):
+    report = get_vt_report(ioc, iocType)
+    vt_detections = (
+        report.get('data', {})
+            .get('attributes', {})
+            .get('last_analysis_stats', {})
+            .get('malicious', None)
+    )
+    datetime_string = format_date(datetime.now())
+    return vt_detections, datetime_string
 
-
-def check_crowdstrike_detection(scans):
-    for engine in scans:
-        if "crowdstrike" in engine.lower() and scans[engine]['category'] == 'malicious':
-            return 'Yes'
-    return 'No'
-
-
-def check_sentinelone_detection(scans):
-    for engine in scans:
-        if "sentinelone" in engine.lower() and scans[engine]['category'] == 'malicious':
-            return 'Yes'
-    return 'No'
-
-
-def clean_and_validate_ioc(ioc):
-    # Remove leading and trailing whitespace
-    cleaned_ioc = ioc.strip()
-
-    # Validate cleaned IOC (basic validation)
-    if not cleaned_ioc:
-        return None
-
-    ioc_type = determine_ioc_type(cleaned_ioc)
-    if ioc_type not in VT_URLS:
-        return None
-
-    return cleaned_ioc
-
-
-def get_abuseipdb_score(ip):
-    with abuseipdb_api_key_lock:
-        api_key = next(abuseipdb_api_key_cycle)
-
-    url = f'https://api.abuseipdb.com/api/v2/check'
-    headers = {
-        'Accept': 'application/json',
-        'Key': api_key
-    }
-    params = {
-        'ipAddress': ip,
-        'maxAgeInDays': 90
-    }
-    response = requests.get(url, headers=headers, params=params)
-
-    if response.status_code == 200:
-        data = response.json()
-        return data['data']['abuseConfidenceScore']
-    else:
-        print(f"Error {response.status_code} from AbuseIPDB: {response.text}")
-        return None
-
-
-def process_ioc(index, ioc):
-    ioc = clean_and_validate_ioc(ioc)
-    if not ioc:
-        return {
-            'Index': index,
-            'Input': 'Invalid IOC',
-            'MD5': None,
-            'SHA1': None,
-            'SHA256': None,
-            'Score': 'Invalid',
-            'Microsoft Detection': 'Invalid',
-            'Crowdstrike Detection': 'Invalid',
-            'SentinelOne Detection': 'Invalid',
-            'AbuseIPDB Score': 'Invalid'
-        }
-
-    ioc_type = determine_ioc_type(ioc)
-    report = get_vt_report(ioc, ioc_type)
-
-    if report:
-        if ioc_type == 'file':
-            md5 = report['data']['attributes']['md5']
-            sha1 = report['data']['attributes']['sha1']
-            sha256 = report['data']['attributes']['sha256']
-        else:
-            md5 = sha1 = sha256 = None
-
-        score = report['data']['attributes']['last_analysis_stats']['malicious']
-
-        microsoft_detection = 'No'
-        scans = report['data']['attributes'].get('last_analysis_results', {})
-        if 'Microsoft' in scans and scans['Microsoft']['category'] == 'malicious':
-            microsoft_detection = 'Yes'
-
-        crowdstrike_detection = check_crowdstrike_detection(scans)
-        sentinelone_detection = check_sentinelone_detection(scans)
-
-        abuseipdb_score = None
-        if ioc_type == 'ip':
-            abuseipdb_score = get_abuseipdb_score(ioc)
-
-        return {
-            'Index': index,
-            'Input': ioc,
-            'MD5': md5,
-            'SHA1': sha1,
-            'SHA256': sha256,
-            'Score': score,
-            'Microsoft Detection': microsoft_detection,
-            'Crowdstrike Detection': crowdstrike_detection,
-            'SentinelOne Detection': sentinelone_detection,
-            'AbuseIPDB Score': abuseipdb_score
-        }
-    else:
-        return {
-            'Index': index,
-            'Input': ioc,
-            'MD5': None,
-            'SHA1': None,
-            'SHA256': None,
-            'Score': 'Not found',
-            'Microsoft Detection': 'Not found',
-            'Crowdstrike Detection': 'Not found',
-            'SentinelOne Detection': 'Not found',
-            'AbuseIPDB Score': 'Not found'
-        }
-
-
-def main(num_threads):
-    # Read input Excel file
-    input_file = 'input.xlsx'
+def main(num_threads, input_file):
     try:
         df = pd.read_excel(input_file)
     except FileNotFoundError:
         print(f"Error: The file {input_file} does not exist.")
         exit()
 
-    # Flatten the DataFrame into a list of IOCs with their original indices
-    ioc_list = [(index, ioc) for index, ioc in enumerate(df.stack().tolist())]
+    conn, cursor = open_db_connection()
+    db_iocs = get_db_positives(conn)
 
-    # Create a list to store output data
-    output_data = []
+    subset = df[~df['ioc'].isin(db_iocs['ioc'])]
+    seen_iocs = db_iocs[db_iocs['ioc'].isin(df['ioc'])]
 
-    # Process IOCs with threading
+    update_as_seen(seen_iocs, cursor, conn)
+
+
+    # Create a list of (index, ioc, iocType)
+    ioc_list = [(index, row['ioc'], row['iocType']) for index, row in subset.iterrows()]
+
+    # Define wrapper for threading
+    def process_ioc_thread(index, ioc, ioc_type):
+        return index, *process_ioc(ioc, ioc_type)
+
+    # Run multithreaded processing
     with ThreadPoolExecutor(max_workers=num_threads) as executor:
-        futures = {executor.submit(process_ioc, index, ioc): (index, ioc) for index, ioc in ioc_list}
+        futures = {executor.submit(process_ioc_thread, index, ioc, ioc_type): index for index, ioc, ioc_type in ioc_list}
         for future in tqdm(as_completed(futures), total=len(futures)):
-            output_data.append(future.result())
+            index, vt_detections, updated_at = future.result()
+            df.loc[index, 'vt_detections'] = vt_detections
 
-    # Sort output data by the original index to maintain input order
-    output_data.sort(key=lambda x: x['Index'])
-
-    # Remove the index from the output data
-    for entry in output_data:
-        del entry['Index']
-
-    # Convert output data to DataFrame
-    output_df = pd.DataFrame(output_data)
 
     # Generate output file name with current date and timestamp
     current_datetime = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_file = f"output_{current_datetime}.xlsx"
 
     # Write output to Excel
-    output_df.to_excel(output_file, index=False)
+    filtered_df = df[df['vt_detections'] >= 10]
+    filtered_df.to_excel(output_file, index=False)
 
-    print(f"Reputation check completed and saved to {output_file}")
+    upsert_db_results(filtered_df, cursor, conn)
+    close_db_connection(conn)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='VirusTotal IOC Checker')
-    parser.add_argument('--threads', type=int, default=4, help='Number of threads to use')
-    args = parser.parse_args()
-    num_threads = args.threads
+    # parser = argparse.ArgumentParser(description='VirusTotal IOC Checker')
+    # parser.add_argument('--threads', type=int, default=4, help='Number of threads to use')
+    # parser.add_argument('--file', default="input2.xlsx", help='Filename')
+    # args = parser.parse_args()
+    # num_threads = args.threads
+    # filename = args.file
 
-    # Ensure the number of threads does not exceed the API key limits
-    max_possible_threads = len(VT_API_KEYS) * MAX_REQUESTS_PER_MINUTE
-    if num_threads > max_possible_threads:
-        print(
-            f"Warning: Number of threads exceeds the limit based on API keys and rate limit. Using {max_possible_threads} threads instead.")
-        num_threads = max_possible_threads
+    # # Ensure the number of threads does not exceed the API key limits
+    # max_possible_threads = len(VT_API_KEYS) * (MAX_REQUESTS_PER_MINUTE // 60)
+    # if num_threads > MAX_REQUESTS_PER_MINUTE:
+    #     print(
+    #         f"Warning: Number of threads exceeds the limit based on API keys and rate limit. Using {max_possible_threads} threads instead.")
+    #     num_threads = max_possible_threads
 
-    main(num_threads)
+    # main(num_threads, filename)
+    print(json.dumps(get_vt_report('681a1b5fe10eeaae001df553ba590843','hash')))

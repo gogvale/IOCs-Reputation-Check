@@ -1,0 +1,10 @@
+VirusTotal:
+  API_KEYS: 
+    - XXXXX
+    - YYYYY
+  URLS:
+    hash: https://www.virustotal.com/api/v3/files/
+    domain: https://www.virustotal.com/api/v3/domains/
+    ip: https://www.virustotal.com/api/v3/ip_addresses/
+    url: https://www.virustotal.com/api/v3/urls/
+  REQ_PER_MIN: 1000
