@@ -155,19 +155,20 @@ def main(num_threads, input_file):
 
 
 if __name__ == "__main__":
-    # parser = argparse.ArgumentParser(description='VirusTotal IOC Checker')
-    # parser.add_argument('--threads', type=int, default=4, help='Number of threads to use')
-    # parser.add_argument('--file', default="input2.xlsx", help='Filename')
-    # args = parser.parse_args()
-    # num_threads = args.threads
-    # filename = args.file
+    # print(json.dumps(get_vt_report('681a1b5fe10eeaae001df553ba590843','hash')))
+    
+    parser = argparse.ArgumentParser(description='VirusTotal IOC Checker')
+    parser.add_argument('--threads', type=int, default=4, help='Number of threads to use')
+    parser.add_argument('--file', default="input2.xlsx", help='Filename')
+    args = parser.parse_args()
+    num_threads = args.threads
+    filename = args.file
 
-    # # Ensure the number of threads does not exceed the API key limits
-    # max_possible_threads = len(VT_API_KEYS) * (MAX_REQUESTS_PER_MINUTE // 60)
-    # if num_threads > MAX_REQUESTS_PER_MINUTE:
-    #     print(
-    #         f"Warning: Number of threads exceeds the limit based on API keys and rate limit. Using {max_possible_threads} threads instead.")
-    #     num_threads = max_possible_threads
+    # Ensure the number of threads does not exceed the API key limits
+    max_possible_threads = len(VT_API_KEYS) * (MAX_REQUESTS_PER_MINUTE // 60)
+    if num_threads > MAX_REQUESTS_PER_MINUTE:
+        print(
+            f"Warning: Number of threads exceeds the limit based on API keys and rate limit. Using {max_possible_threads} threads instead.")
+        num_threads = max_possible_threads
 
-    # main(num_threads, filename)
-    print(json.dumps(get_vt_report('681a1b5fe10eeaae001df553ba590843','hash')))
+    main(num_threads, filename)
