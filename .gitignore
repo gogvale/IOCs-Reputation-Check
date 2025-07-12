@@ -4,3 +4,4 @@
 .ipynb
 db/*
 !db/create_db.sql
+.DS_Store
