@@ -1,0 +1,18 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+pandas = "*"
+requests = "*"
+tqdm = "*"
+openpyxl = "*"
+pyyaml = "*"
+vt-py = "*"
+
+[dev-packages]
+jupyterlab = "*"
+
+[requires]
+python_version = "3.13"
