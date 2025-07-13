@@ -9,7 +9,8 @@ import argparse
 import base64
 import yaml
 import sqlite3
-import json
+import os
+
 
 # Constants
 with open('settings.yaml', 'r', encoding='utf-8') as file:
@@ -143,10 +144,12 @@ def main(num_threads, input_file):
             index, vt_detections, updated_at = future.result()
             df.loc[index, 'vt_detections'] = vt_detections
 
+    # Ensure the output directory exists
+    os.makedirs("out", exist_ok=True)
 
     # Generate output file name with current date and timestamp
     current_datetime = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = f"output_{current_datetime}.xlsx"
+    output_file = f"out/weekly_report_{current_datetime}.xlsx"
 
     # Write output to Excel
     filtered_df = df[df['vt_detections'] >= 10]
