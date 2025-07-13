@@ -96,7 +96,6 @@ def get_vt_report(ioc, ioc_type):
     if response.status_code == 200:
         return response.json()
     else:
-        print(f"Error {response.status_code}: {response.text}")  # Debug statement
         return None
 
 
@@ -104,9 +103,10 @@ def process_ioc(ioc, iocType):
     report = get_vt_report(ioc, iocType)
     vt_detections = (
         report.get('data', {})
-            .get('attributes', {})
-            .get('last_analysis_stats', {})
-            .get('malicious', None)
+              .get('attributes', {})
+              .get('last_analysis_stats', {})
+              .get('malicious', 0)
+        if report else -1
     )
     datetime_string = format_date(datetime.now())
     return vt_detections, datetime_string
@@ -133,6 +133,8 @@ def main(num_threads, input_file):
     # Define wrapper for threading
     def process_ioc_thread(index, ioc, ioc_type):
         return index, *process_ioc(ioc, ioc_type)
+    
+    df['vt_detections'] = pd.NA
 
     # Run multithreaded processing
     with ThreadPoolExecutor(max_workers=num_threads) as executor:
