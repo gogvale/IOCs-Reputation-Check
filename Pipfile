@@ -11,6 +11,7 @@ openpyxl = "*"
 pyyaml = "*"
 vt-py = "*"
 streamlit = "*"
+colorama = "*"
 
 [dev-packages]
 jupyterlab = "*"
