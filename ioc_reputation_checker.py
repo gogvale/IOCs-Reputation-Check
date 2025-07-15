@@ -10,12 +10,14 @@ import base64
 import yaml
 import sqlite3
 import os
+import streamlit as st
+import time
 
 
 # Constants
 with open('settings.yaml', 'r', encoding='utf-8') as file:
     VirusTotal = yaml.safe_load(file)['VirusTotal']
-    VT_API_KEYS = VirusTotal['API_KEYS']
+    # VT_API_KEYS = VirusTotal['API_KEYS']
     VT_URLS = VirusTotal['URLS']
     MAX_REQUESTS_PER_MINUTE = VirusTotal['REQ_PER_MIN']
     VT_MIN_DETECTION = VirusTotal['MIN_DETECTION']
@@ -23,7 +25,7 @@ with open('settings.yaml', 'r', encoding='utf-8') as file:
 
 # Thread-safe iterators for API keys
 vt_api_key_lock = threading.Lock()
-vt_api_key_cycle = itertools.cycle(VT_API_KEYS)
+# vt_api_key_cycle = itertools.cycle(VT_API_KEYS)
 
 def format_date(datetime):
     return datetime.strftime("%Y-%m-%d %H:%M:%S")
@@ -113,13 +115,7 @@ def process_ioc(ioc, iocType):
     datetime_string = format_date(datetime.now())
     return vt_detections, datetime_string
 
-def main(num_threads, input_file):
-    try:
-        df = pd.read_excel(input_file)
-    except FileNotFoundError:
-        print(f"Error: The file {input_file} does not exist.")
-        exit()
-
+def main(num_threads, df):
     conn, cursor = open_db_connection()
     db_iocs = get_db_positives(conn)
 
@@ -128,53 +124,63 @@ def main(num_threads, input_file):
 
     update_as_seen(seen_iocs, cursor, conn)
 
-
-    # Create a list of (index, ioc, iocType)
     ioc_list = [(index, row['ioc'], row['iocType']) for index, row in subset.iterrows()]
 
-    # Define wrapper for threading
     def process_ioc_thread(index, ioc, ioc_type):
         return index, *process_ioc(ioc, ioc_type)
-    
-    df['vt_detections'] = pd.NA
 
-    # Run multithreaded processing
+    # Initialize vt_detections column as numeric, fill with -1 as default for unprocessed
+    df['vt_detections'] = -1
+
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    results = []  # <-- Initialize this before loop!
+
     with ThreadPoolExecutor(max_workers=num_threads) as executor:
         futures = {executor.submit(process_ioc_thread, index, ioc, ioc_type): index for index, ioc, ioc_type in ioc_list}
-        for future in tqdm(as_completed(futures), total=len(futures)):
+
+        total = len(futures)
+        completed = 0
+
+        for future in as_completed(futures):
             index, vt_detections, updated_at = future.result()
             df.loc[index, 'vt_detections'] = vt_detections
 
-    # Ensure the output directory exists
-    os.makedirs("out", exist_ok=True)
+            completed += 1
+            progress = int(completed / total * 100)
+            progress_bar.progress(progress)
+            status_text.text(f"Processed {completed} / {total}")
 
-    # Generate output file name with current date and timestamp
+    # Filter with numeric comparison after ensuring dtype is int
+    df['vt_detections'] = pd.to_numeric(df['vt_detections'], errors='coerce').fillna(-1).astype(int)
+    filtered_df = df[df['vt_detections'] >= VT_MIN_DETECTION]
+
+    os.makedirs("out", exist_ok=True)
     current_datetime = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_file = f"out/weekly_report_{current_datetime}.xlsx"
-
-    # Write output to Excel
-    filtered_df = df[df['vt_detections'] >= 10]
     filtered_df.to_excel(output_file, index=False)
 
     upsert_db_results(filtered_df, cursor, conn)
     close_db_connection(conn)
 
+    st.success(f"Process complete! Saved filtered results to `{output_file}`.")
 
 if __name__ == "__main__":
-    # print(json.dumps(get_vt_report('681a1b5fe10eeaae001df553ba590843','hash')))
-    
-    parser = argparse.ArgumentParser(description='VirusTotal IOC Checker')
-    parser.add_argument('--threads', type=int, default=4, help='Number of threads to use')
-    parser.add_argument('--file', default="input2.xlsx", help='Filename')
-    args = parser.parse_args()
-    num_threads = args.threads
-    filename = args.file
+    st.title("🔍 IoC Reputation Checker (VirusTotal)")
+    api_keys_input = st.text_input("Enter VirusTotal API Key", type="password")
+    threads = st.slider("Select Number of Threads", 1, 200, 4)
+    uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
 
-    # Ensure the number of threads does not exceed the API key limits
-    max_possible_threads = len(VT_API_KEYS) * (MAX_REQUESTS_PER_MINUTE // 60)
-    if num_threads > MAX_REQUESTS_PER_MINUTE:
-        print(
-            f"Warning: Number of threads exceeds the limit based on API keys and rate limit. Using {max_possible_threads} threads instead.")
-        num_threads = max_possible_threads
+    if st.button("Run Reputation Check"):
+        global VT_API_KEYS, vt_api_key_cycle  # <-- Moved here
+        if not uploaded_file or not api_keys_input.strip():
+            st.error("Please provide both API keys and an Excel file.")
+        else:
+            df = pd.read_excel(uploaded_file)
 
-    main(num_threads, filename)
+            # Override global VT_API_KEYS
+            VT_API_KEYS = [key.strip() for key in api_keys_input.strip().splitlines()]
+            vt_api_key_cycle = itertools.cycle(VT_API_KEYS)
+
+            main(threads, df)

@@ -10,6 +10,7 @@ tqdm = "*"
 openpyxl = "*"
 pyyaml = "*"
 vt-py = "*"
+streamlit = "*"
 
 [dev-packages]
 jupyterlab = "*"
