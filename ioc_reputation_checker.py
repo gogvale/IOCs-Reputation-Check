@@ -18,6 +18,7 @@ with open('settings.yaml', 'r', encoding='utf-8') as file:
     VT_API_KEYS = VirusTotal['API_KEYS']
     VT_URLS = VirusTotal['URLS']
     MAX_REQUESTS_PER_MINUTE = VirusTotal['REQ_PER_MIN']
+    VT_MIN_DETECTION = VirusTotal['MIN_DETECTION']
 
 
 # Thread-safe iterators for API keys
@@ -34,7 +35,7 @@ def open_db_connection(filepath="db/db.sqlite3"):
     return conn, cursor
 
 def get_db_positives(conn):
-    query = "SELECT ic.* FROM IoC AS ic WHERE vt_detections >= 10"
+    query = f"SELECT * FROM IoC WHERE vt_detections >= {VT_MIN_DETECTION}"
     db_iocs = pd.read_sql_query(query, conn)
     return db_iocs
 

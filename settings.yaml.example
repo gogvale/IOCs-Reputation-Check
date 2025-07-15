@@ -8,3 +8,4 @@ VirusTotal:
     ip: https://www.virustotal.com/api/v3/ip_addresses/
     url: https://www.virustotal.com/api/v3/urls/
   REQ_PER_MIN: 1000
+  MIN_DETECTION: 10
