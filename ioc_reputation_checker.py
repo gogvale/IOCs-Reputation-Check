@@ -12,6 +12,7 @@ import sqlite3
 import os
 import streamlit as st
 import time
+import io
 
 
 # Constants
@@ -155,16 +156,36 @@ def main(num_threads, df):
     # Filter with numeric comparison after ensuring dtype is int
     df['vt_detections'] = pd.to_numeric(df['vt_detections'], errors='coerce').fillna(-1).astype(int)
     filtered_df = df[df['vt_detections'] >= VT_MIN_DETECTION]
-
-    os.makedirs("out", exist_ok=True)
     current_datetime = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = f"out/weekly_report_{current_datetime}.xlsx"
-    filtered_df.to_excel(output_file, index=False)
+    # Prepare in-memory Excel
+    excel_buf = io.BytesIO()
+    with pd.ExcelWriter(excel_buf, engine="xlsxwriter") as writer:
+        filtered_df.to_excel(writer, index=False, sheet_name="Results")
+    excel_buf.seek(0)
 
+    # Prepare CSV bytes
+    csv_bytes = filtered_df.to_csv(index=False).encode('utf-8')
+
+    # Streamlit download buttons (no server-side file persistence)
+    st.download_button(
+        label="⬇️ Download results (Excel)",
+        data=excel_buf,
+        file_name=f"weekly_report_{current_datetime}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="dl_xlsx",
+    )
+
+    st.download_button(
+        label="⬇️ Download results (CSV)",
+        data=csv_bytes,
+        file_name=f"weekly_report_{current_datetime}.csv",
+        mime="text/csv",
+        key="dl_csv",
+    )
     upsert_db_results(filtered_df, cursor, conn)
     close_db_connection(conn)
 
-    st.success(f"Process complete! Saved filtered results to `{output_file}`.")
+    st.success("Process complete! Your downloads are ready below.")
 
 if __name__ == "__main__":
     st.title("🔍 IoC Reputation Checker (VirusTotal)")

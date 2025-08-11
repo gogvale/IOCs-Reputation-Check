@@ -12,6 +12,7 @@ pyyaml = "*"
 vt-py = "*"
 streamlit = "*"
 colorama = "*"
+xlsxwriter = "*"
 
 [dev-packages]
 jupyterlab = "*"
