@@ -22,6 +22,7 @@ with open('settings.yaml', 'r', encoding='utf-8') as file:
     VT_URLS = VirusTotal['URLS']
     MAX_REQUESTS_PER_MINUTE = VirusTotal['REQ_PER_MIN']
     VT_MIN_DETECTION = VirusTotal['MIN_DETECTION']
+MAX_CHARS = 255
 
 
 # Thread-safe iterators for API keys
@@ -155,6 +156,7 @@ def main(num_threads, df):
 
     # Filter with numeric comparison after ensuring dtype is int
     df['vt_detections'] = pd.to_numeric(df['vt_detections'], errors='coerce').fillna(-1).astype(int)
+    df[f">{MAX_CHARS} chars"] = df['ioc'].str.len() > MAX_CHARS
     filtered_df = df[df['vt_detections'] >= VT_MIN_DETECTION]
     current_datetime = datetime.now().strftime("%Y%m%d_%H%M%S")
     # Prepare in-memory Excel
