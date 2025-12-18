@@ -1,5 +1,7 @@
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from tqdm import tqdm
 from datetime import datetime
 import itertools
@@ -85,6 +87,42 @@ def close_db_connection(conn):
     conn.close()
 
 
+def get_session_with_retries(retries=5, backoff_factor=1, status_forcelist=(500, 502, 503, 504), session=None):
+    """
+    Creates a requests.Session object with a retry mechanism.
+
+    This function configures a session to automatically retry requests that fail
+    due to transient errors, such as network issues or temporary server problems.
+    It uses an exponential backoff strategy to avoid overwhelming the server.
+
+    Args:
+        retries (int): The total number of retry attempts.
+        backoff_factor (float): A factor to calculate the delay between retries.
+                                The delay will be {backoff factor} * (2 ** ({number of total retries} - 1)).
+        status_forcelist (tuple): A set of HTTP status codes that should force a retry.
+        session (requests.Session, optional): An existing session to which the retry
+                                              logic will be added. If None, a new
+                                              session is created.
+
+    Returns:
+        requests.Session: A session object with the retry mechanism configured.
+    """
+    session = session or requests.Session()
+    retry = Retry(
+        total=retries,
+        read=retries,
+        connect=retries,
+        backoff_factor=backoff_factor,
+        status_forcelist=status_forcelist,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    return session
+
+session = get_session_with_retries()
+
+
 def get_vt_report(ioc, ioc_type):
     with vt_api_key_lock:
         api_key = next(vt_api_key_cycle)
@@ -98,7 +136,7 @@ def get_vt_report(ioc, ioc_type):
     else:
         url = VT_URLS[ioc_type] + ioc
 
-    response = requests.get(url, headers=headers)
+    response = session.get(url, headers=headers)
     if response.status_code == 200:
         return response.json()
     else:
@@ -193,7 +231,7 @@ if __name__ == "__main__":
     st.title("🔍 IoC Reputation Checker (VirusTotal)")
     api_keys_input = st.text_input("Enter VirusTotal API Key", type="password")
     threads = st.slider("Select Number of Threads", 1, 200, 4)
-    uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
+    uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx","csv"])
 
     if st.button("Run Reputation Check"):
         global VT_API_KEYS, vt_api_key_cycle  # <-- Moved here
