@@ -2,45 +2,77 @@
 
 ## About
 
-The **IOC Reputation Checker** is a Python script designed to automate the process of checking the reputation of various Indicators of Compromise (IOCs) such as hash, domains, IP addresses, and URLs. The script leverages VirusTotal and AbuseIPDB APIs to gather reputation data, which can be invaluable for cybersecurity professionals during threat hunting, incident response.
+The **IOC Reputation Checker** is a web-based utility designed to automate the process of checking the reputation of Indicators of Compromise (IOCs) using the VirusTotal API. It is built with Python and Streamlit, providing an interactive user interface for cybersecurity professionals.
+
+Users can upload a CSV or Excel file containing IOCs (hashes, domains, IPs, URLs). The application processes these IOCs concurrently, fetches the latest data from VirusTotal, and provides downloadable reports of the results.
 
 ## Features
 
-- **Multi-Source Reputation Check**: Queries both VirusTotal and AbuseIPDB for comprehensive reputation data.
-- **Multiple API Key Support**: Supports multiple API keys for both VirusTotal and AbuseIPDB, allowing for extended usage without hitting daily limits.
-- **Threading**: Utilizes multi-threading to handle large volumes of IOCs efficiently.
-- **Excel Integration**: Reads IOCs from an input Excel file and writes the results to an output Excel file, making it easy to integrate into existing workflows.
-- **Detailed Output**: Provides detailed output, including hash values, detection status from popular security vendors, and reputation scores from AbuseIPDB.
+- **Web-Based UI**: An easy-to-use interface built with Streamlit for file uploads and interaction.
+- **VirusTotal Integration**: Leverages the VirusTotal API for comprehensive reputation data.
+- **Multiple API Key Support**: Cycles through a list of API keys provided in the UI to maximize request throughput.
+- **Concurrent Processing**: Utilizes multi-threading to handle large volumes of IOCs efficiently.
+- **Local Caching**: Uses a SQLite database to cache previous results, avoiding redundant scans.
+- **Flexible Input**: Supports both CSV and Excel (`.xlsx`) files as input.
+- **Downloadable Reports**: Provides results in both CSV and Excel formats.
 
 ## How to Use
 
-### Prerequisites
+### 1. Prerequisites
 
-- Python 3.x
-- Required Python packages: `pandas`, `requests`, `tqdm`, `openpyxl`
+- Python 3.13 (as specified in `Pipfile`)
+- `pipenv`
 
-Install the required packages using pip:
+### 2. Setup
 
+**a. Clone the Repository**
 ```bash
-pip install -r requirements.txt
+git clone <repository-url>
+cd IOCs-Reputation-Check
 ```
 
-### Script Overview
-
-1. **Input File**: The script reads IOCs from an input Excel file named `input.xlsx`. The IOCs can be files, domains, IP addresses, or URLs.
-2. **Reputation Check**: For each IOC, the script queries VirusTotal and AbuseIPDB (for IPs only) to gather reputation data.
-3. **Output File**: The script writes the results to an Excel file, including details such as hash values, detection statuses, and reputation scores.
-
-### Example Usage
-
-Run the script with the desired number of threads:
+**b. Configure Settings**
+The application requires a `settings.yaml` file for basic configuration. Copy the example file:
 
 ```bash
-python ioc_reputation_checker.py --threads 10
+cp settings.yaml.example settings.yaml
+```
+*Note: While you can add API keys to this file, the application's UI will prompt you to enter them at runtime.*
+
+**c. Install Dependencies**
+This project uses `pipenv` to manage dependencies. Run the setup script to install them:
+
+```bash
+./setup.command
+```
+(On Windows, you can run `pipenv install` directly).
+
+**d. Initialize the Database**
+Create the SQLite database and its schema using the provided SQL file:
+
+```bash
+mkdir -p db
+sqlite3 db/db.sqlite3 < db/create_db.sql
 ```
 
-### Notes
+### 3. Running the Application
 
-- **API Limits**: The script is configured to handle API key limits by cycling through multiple keys. Ensure that your API keys have enough daily quota to handle the number of IOCs you intend to process.
-- **Input File Format**: Ensure that the input file is an Excel file (`.xlsx`) and that the IOCs are correctly formatted (e.g., valid IP addresses, domain names, etc.).
-- **Output File Naming**: The output file is named with the current date and time to avoid overwriting previous results.
+Launch the Streamlit web application by running the `run.command` script:
+
+```bash
+./run.command
+```
+Or, you can run it directly with `pipenv`:
+```bash
+pipenv run streamlit run ioc_reputation_checker.py
+```
+This will start the application in your web browser.
+
+### 4. Using the App
+
+1.  Open the application in your browser.
+2.  Enter one or more VirusTotal API keys in the text input field (one per line).
+3.  Use the slider to select the number of threads for processing.
+4.  Upload your CSV or Excel file containing the IOCs.
+5.  Click "Run Reputation Check".
+6.  Once the process is complete, download your results using the provided buttons.
